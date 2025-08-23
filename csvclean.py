@@ -5,7 +5,7 @@ from io import StringIO
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-st.title("🧹 AI Powered CSV Cleaner & Explorer")
+st.title("📂🧹 AI-Powered CSV Cleaner & Visualizer (Created by Tech Fusion club of Rama University)")
 
 # ---------- File Upload ----------
 uploaded_file = st.file_uploader("📂 Upload your CSV file", type=["csv"])
