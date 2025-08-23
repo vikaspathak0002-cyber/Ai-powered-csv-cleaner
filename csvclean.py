@@ -1,162 +1,140 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from io import StringIO
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.ensemble import IsolationForest
-from sklearn.impute import SimpleImputer
 
-# --- Streamlit Page Config ---
-st.set_page_config(page_title="AI CSV Cleaner", layout="wide")
-st.title("📂 AI-Powered CSV Cleaner & Visualizer (Created by Tech Fusion club of Rama University)")
+st.title("🧹 AI Powered CSV Cleaner & Explorer")
 
-# --- Sidebar ---
-st.sidebar.header("⚙ Settings")
-uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+# ---------- File Upload ----------
+uploaded_file = st.file_uploader("📂 Upload your CSV file", type=["csv"])
 
-main_tabs = st.tabs([
-    "📝 Raw Data", "🔧 Cleaning", "🤖 ML (Impute + Outliers)",
-    "📊 Visualizations", "📈 Dashboard"
-])
-
-if uploaded_file is not None:
+if uploaded_file:
     df = pd.read_csv(uploaded_file)
 
-    # --- Tab 1: Raw Data ---
-    with main_tabs[0]:
-        st.subheader("Raw Data Preview")
-        st.dataframe(df.head(20))
-        st.write("Shape:", df.shape)
+    # ---------- Preprocessing ----------
+    def preprocess_dataframe(df):
+        df_clean = df.copy()
+        for col in df_clean.columns:
+            if df_clean[col].dtype == "object":
+                # remove % and commas
+                df_clean[col] = df_clean[col].astype(str).str.replace('%', '', regex=True).str.replace(',', '', regex=True)
+                # try to convert to numeric
+                df_clean[col] = pd.to_numeric(df_clean[col], errors="ignore")
+        return df_clean
 
-    # --- Tab 2: Cleaning ---
-    with main_tabs[1]:
-        st.subheader("Cleaning Process")
+    df = preprocess_dataframe(df)
 
-        # Normalize column names
-        df.columns = df.columns.str.strip().str.lower().str.replace(r"[^a-z0-9]+", "_", regex=True)
+    # ---------- Sidebar ----------
+    st.sidebar.header("🛠 Options")
 
-        # Clean string columns
-        missing_tokens = {"", "na", "n/a", "null", "none", "nan", "-", "—"}
-        for col in df.select_dtypes(include=["object"]).columns:
-            df[col] = df[col].astype(str).str.strip()
-            df[col] = df[col].replace(missing_tokens, "", regex=True)
+    # Cleaning
+    if st.sidebar.checkbox("🔄 Clean Missing Values"):
+        strategy = st.sidebar.radio("Select Strategy:", ["Replace Strings with NaN", "Numeric → Mean", "Drop Rows"])
+        if strategy == "Replace Strings with NaN":
+            df = df.applymap(lambda x: np.nan if isinstance(x, str) and not x.replace('.', '', 1).isdigit() else x)
+        elif strategy == "Numeric → Mean":
+            for col in df.select_dtypes(include=np.number).columns:
+                df[col] = df[col].fillna(df[col].mean())
+        elif strategy == "Drop Rows":
+            df = df.dropna()
 
-        # Convert booleans
-        bool_map = {"true": True, "yes": True, "y": True, "1": True,
-                    "false": False, "no": False, "n": False, "0": False}
-        for col in df.columns:
-            df[col] = df[col].replace(bool_map).infer_objects(copy=False)
-
-        # Try parsing dates
-        for col in df.columns:
-            try:
-                df[col] = pd.to_datetime(df[col], errors="ignore")
-            except Exception:
-                pass
-
-        # Clean numeric-like strings
-        for col in df.select_dtypes(include=["object"]).columns:
-            df[col] = df[col].str.replace(",", "", regex=False)
-            df[col] = pd.to_numeric(df[col], errors="ignore")
-
-        # Drop empty rows/cols & duplicates
-        df = df.dropna(how="all").dropna(axis=1, how="all").drop_duplicates()
-
-        st.success("Cleaning done ✅")
+    # Show Data
+    if st.sidebar.checkbox("📊 Show Data"):
         st.dataframe(df.head(20))
 
-    # --- Tab 3: ML ---
-    with main_tabs[2]:
-        st.subheader("ML-Based Cleaning")
+    # Info
+    if st.sidebar.checkbox("ℹ️ Show Info"):
+        buffer = StringIO()
+        df.info(buf=buffer)
+        st.text(buffer.getvalue())
 
-        imputation_strategy = st.sidebar.selectbox(
-            "Missing Value Imputation Strategy",
-            ["mean", "median", "most_frequent"]
-        )
+    # Describe
+    if st.sidebar.checkbox("📈 Describe Data"):
+        st.write(df.describe())
 
-        numeric_cols = df.select_dtypes(include=[np.number]).columns
-        categorical_cols = df.select_dtypes(exclude=[np.number]).columns
+    # Columns
+    if st.sidebar.checkbox("📋 Show Columns"):
+        st.write(list(df.columns))
 
-        if len(numeric_cols) > 0:
-            imputer_num = SimpleImputer(strategy=imputation_strategy)
-            df[numeric_cols] = imputer_num.fit_transform(df[numeric_cols])
-            st.write(f"Numeric cols imputed with {imputer_num.strategy}")
+    # ---------- Graph Visualization ----------
+    if st.sidebar.checkbox("📊 Graph Visualization"):
+        st.subheader("📊 Data Visualization (Seaborn)")
 
-        if len(categorical_cols) > 0:
-            imputer_cat = SimpleImputer(strategy="most_frequent")
-            df[categorical_cols] = imputer_cat.fit_transform(df[categorical_cols])
-            st.write("Categorical cols imputed with most frequent value")
+        # ✅ User choice: Full vs Sample %
+        data_choice = st.radio("Select Data for Graph:", ["Use Full Data", "Use Sample %"])
+        if data_choice == "Use Sample %":
+            sample_size = st.slider("Select sample percentage (%)", 5, 100, 10)  # default 10%
+            df_plot = df.sample(frac=sample_size/100, random_state=42)
+            st.info(f"Showing graph on **{sample_size}% sample data** ({len(df_plot)} rows out of {len(df)})")
+        else:
+            df_plot = df
 
-        # Outlier handling
-        outlier_action = st.sidebar.radio("Outlier Handling", ["mark", "remove", "ignore"])
-        if not df[numeric_cols].empty:
-            model = IsolationForest(contamination=0.05, random_state=42)
-            outlier_labels = model.fit_predict(df[numeric_cols])
+        numeric_cols = df_plot.select_dtypes(include=np.number).columns.tolist()
 
-            if outlier_action == "mark":
-                df["_outlier"] = np.where(outlier_labels == -1, "Outlier", "Normal")
-            elif outlier_action == "remove":
-                df = df[outlier_labels == 1]
+        if numeric_cols:
+            x_axis = st.selectbox("Select X-axis", options=numeric_cols)
+            y_axis = st.selectbox("Select Y-axis (Optional)", options=[None] + numeric_cols)
 
-            st.write("Outlier Handling:", outlier_action)
+            graph_type = st.radio("Select Graph Type", ["Line Plot", "Bar Plot", "Scatter Plot", "Histogram", "Box Plot", "Correlation Heatmap"])
 
-        st.success("ML Cleaning Done ✅")
-        st.dataframe(df.head(20))
-
-    # --- Tab 4: Visualizations ---
-    with main_tabs[3]:
-        st.subheader("Choose Visualization")
-        chart_type = st.selectbox("Chart Type", ["Histogram", "Boxplot", "Scatterplot", "Correlation Heatmap"])
-
-        numeric_cols = df.select_dtypes(include=[np.number]).columns
-
-        if chart_type == "Histogram":
-            if len(numeric_cols) > 0:
-                col = st.selectbox("Column", numeric_cols)
+            if graph_type == "Line Plot" and y_axis:
                 fig, ax = plt.subplots()
-                sns.histplot(df[col].dropna(), bins=30, ax=ax)
+                sns.lineplot(x=df_plot[x_axis], y=df_plot[y_axis], marker="o", color="blue", ax=ax)
+                ax.set_title(f"Line Plot of {y_axis} vs {x_axis}")
+                ax.set_xlabel(x_axis)
+                ax.set_ylabel(y_axis)
                 st.pyplot(fig)
-            else:
-                st.warning("No numeric columns available for histogram.")
 
-        elif chart_type == "Boxplot":
-            if len(numeric_cols) > 0:
-                col = st.selectbox("Column", numeric_cols)
+            elif graph_type == "Bar Plot" and y_axis:
                 fig, ax = plt.subplots()
-                sns.boxplot(y=df[col].dropna(), ax=ax)
+                sns.barplot(x=df_plot[x_axis], y=df_plot[y_axis], palette="viridis", ax=ax)
+                ax.set_title(f"Bar Plot of {y_axis} vs {x_axis}")
+                ax.set_xlabel(x_axis)
+                ax.set_ylabel(y_axis)
                 st.pyplot(fig)
-            else:
-                st.warning("No numeric columns available for boxplot.")
 
-        elif chart_type == "Scatterplot":
-            if len(numeric_cols) > 1:
-                x = st.selectbox("X-axis", numeric_cols)
-                y = st.selectbox("Y-axis", numeric_cols)
+            elif graph_type == "Scatter Plot" and y_axis:
                 fig, ax = plt.subplots()
-                ax.scatter(df[x].dropna(), df[y].dropna(), alpha=0.5)
+                sns.scatterplot(x=df_plot[x_axis], y=df_plot[y_axis], color="red", ax=ax)
+                ax.set_title(f"Scatter Plot of {y_axis} vs {x_axis}")
+                ax.set_xlabel(x_axis)
+                ax.set_ylabel(y_axis)
                 st.pyplot(fig)
-            else:
-                st.warning("Need at least 2 numeric columns for scatterplot.")
 
-        elif chart_type == "Correlation Heatmap":
-            if len(numeric_cols) > 1:
-                corr = df.corr(numeric_only=True)
-                fig, ax = plt.subplots(figsize=(8, 6))
-                sns.heatmap(corr, annot=True, cmap="coolwarm", ax=ax)
-                st.pyplot(fig)
-            else:
-                st.warning("Not enough numeric columns for correlation heatmap.")
-
-    # --- Tab 5: Dashboard ---
-    with main_tabs[4]:
-        st.subheader("📈 Summary Dashboard")
-
-        numeric_df = df.select_dtypes(include=[np.number])
-        if not numeric_df.empty:
-            col1, col2 = st.columns(2)
-            with col1:
+            elif graph_type == "Histogram":
                 fig, ax = plt.subplots()
-                sns.histplot(numeric_df.iloc[:, 0].dropna(), bins=30, ax=ax)
+                sns.histplot(df_plot[x_axis].dropna(), bins=30, kde=True, color="green", ax=ax)
+                ax.set_title(f"Histogram of {x_axis}")
+                ax.set_xlabel(x_axis)
+                ax.set_ylabel("Frequency")
                 st.pyplot(fig)
-            with col2:
-                fig, ax
+
+            elif graph_type == "Box Plot":
+                fig, ax = plt.subplots()
+                sns.boxplot(y=df_plot[x_axis], palette="Set2", ax=ax)
+                ax.set_title(f"Box Plot of {x_axis}")
+                ax.set_ylabel(x_axis)
+                st.pyplot(fig)
+
+            elif graph_type == "Correlation Heatmap":
+                corr = df_plot.corr(numeric_only=True)
+                fig, ax = plt.subplots(figsize=(10, 6))
+                sns.heatmap(corr, annot=True, cmap="coolwarm", ax=ax, fmt=".2f")
+                ax.set_title("Correlation Heatmap")
+                st.pyplot(fig)
+
+        else:
+            st.warning("⚠️ No numeric columns available for plotting.")
+
+    # ---------- Download Cleaned CSV ----------
+    st.sidebar.markdown("### 💾 Download")
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.sidebar.download_button(
+        label="⬇️ Download Cleaned CSV",
+        data=csv,
+        file_name="cleaned_data.csv",
+        mime="text/csv"
+    )
+
